@@ -77,6 +77,14 @@ details table{border-collapse:collapse;width:100%;font-size:13.5px;margin-top:10
 details td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 details tr:last-child td{border-bottom:0}
 details .s{font-family:var(--serif);font-size:16px}
+.syncpart{display:flex;flex-direction:column;gap:7px;margin-top:14px}
+.syncpart:first-of-type{margin-top:0}
+.syncpart h3{margin:0;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-faint);font-weight:700}
+.syncpart p{margin:0;font-size:13px;color:var(--ink-soft)}
+.synccode,.syncin{width:100%;font-family:Consolas,"SF Mono",Menlo,monospace;font-size:12.5px;padding:9px 11px;border-radius:8px;border:1px solid var(--line-strong);background:var(--surface-2);color:var(--ink);word-break:break-all}
+.syncin{min-height:62px;resize:vertical}
+.syncmsg{margin:0;font-size:13px;font-weight:600}
+.syncmsg.ok{color:var(--ok)} .syncmsg.ng{color:var(--ng)}
 .foot{font-size:12px;color:var(--ink-faint);border-top:1px solid var(--line);padding-top:12px}
 [hidden]{display:none !important}
 </style>
@@ -133,6 +141,30 @@ details .s{font-family:var(--serif);font-size:16px}
       <button class="btn ghost" id="markOk">言えたことにする</button>
     </div>
   </div>
+
+  <details>
+    <summary>別の端末と記録をそろえる</summary>
+    <div class="syncpart">
+      <h3>この端末のコードを渡す</h3>
+      <p>いま「言えた」になっているものをコードにします。コピーして、もう一方の端末に貼ってください。</p>
+      <textarea class="synccode" id="syncOut" readonly rows="2"></textarea>
+      <div class="btns"><button class="btn ghost" id="syncMake">コードを作ってコピー</button></div>
+      <p class="syncmsg" id="syncOutMsg"></p>
+    </div>
+    <div class="syncpart">
+      <h3>もう一方のコードを取り込む</h3>
+      <p>貼って取り込むと、<b>両方で言えたものが合わさります</b>（こちらの記録が消えることはありません）。</p>
+      <textarea class="syncin" id="syncIn" placeholder="UT1- で始まるコードを貼ってください"></textarea>
+      <div class="btns"><button class="btn ghost" id="syncApply">取り込む</button></div>
+      <p class="syncmsg" id="syncInMsg"></p>
+    </div>
+    <div class="syncpart">
+      <p style="font-size:12px;color:var(--ink-faint)">
+        本体の単語アプリのコード（SV2-）とは別物です。「意味を覚えた」と「発音できる」は別の力なので、記録も分けています。<br>
+        このコードは<b>並び順に関係なく作られる</b>ので、あとから単語が増えても古いコードがそのまま使えます。
+      </p>
+    </div>
+  </details>
 
   <details>
     <summary>発音のルール早見（k / g / sk）</summary>
@@ -407,6 +439,82 @@ Array.prototype.forEach.call($("modeSeg").querySelectorAll("button"), function(b
     });
     save(); renderChips(); build(false);
   });
+});
+
+/* ---------- 端末をまたいで記録をそろえるコード ----------
+   本体アプリと同じ考え方。項目そのものから短い番号を作るので、
+   並び順に依存せず、あとから語が増えても古いコードが使える。
+   接頭辞 UT1- は本体の SV2- と混ざらないための目印。 */
+var B64C = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+function h30(s){
+  var h = 2166136261;
+  for(var i=0;i<s.length;i++){
+    h = (h ^ s.charCodeAt(i)) >>> 0;
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h & 0x3FFFFFFF;
+}
+function enc30(n){ var s=""; for(var i=4;i>=0;i--) s += B64C.charAt((n >> (i*6)) & 63); return s; }
+function dec30(str){
+  var n = 0;
+  for(var i=0;i<5;i++){ var v = B64C.indexOf(str.charAt(i)); if(v < 0) return -1; n = n*64 + v; }
+  return n;
+}
+function allKeys(){
+  var out = [];
+  DATA.ord.forEach(function(o){ out.push("ord:" + o.sv); });
+  DATA.fras.forEach(function(o){ out.push("fras:" + o.sv); });
+  return out;
+}
+function makeCode(){
+  var out = "UT1-";
+  allKeys().forEach(function(k){ if(state.done[k]) out += enc30(h30(k)); });
+  return out;
+}
+function applyCode(raw){
+  var code = String(raw).replace(/\s+/g, "");
+  if(code.indexOf("UT1-") !== 0){
+    if(code.indexOf("SV2-") === 0 || code.indexOf("SV1-") === 0)
+      return { ok:false, msg:"これは単語アプリのコードです。発音ページのコードは UT1- で始まります。" };
+    return { ok:false, msg:"UT1- で始まるコードを貼ってください。" };
+  }
+  var body = code.slice(4);
+  if(body.length % 5 !== 0) return { ok:false, msg:"コードが途中で切れているようです。全部を選んでコピーし直してください。" };
+  var byHash = {};
+  allKeys().forEach(function(k){ var n = h30(k); (byHash[n] || (byHash[n] = [])).push(k); });
+  var added = 0;
+  for(var i=0;i<body.length;i+=5){
+    var n = dec30(body.substr(i,5));
+    if(n < 0) return { ok:false, msg:"コードに使えない文字が混ざっています。もう一度コピーし直してください。" };
+    var hits = byHash[n];
+    if(!hits) continue;
+    hits.forEach(function(k){ if(!state.done[k]){ state.done[k] = true; added++; } });
+  }
+  save();
+  return { ok:true, msg: added === 0
+    ? "取り込みました。新しく増えたものはありませんでした（すでに同じ状態です）。"
+    : "取り込みました。" + added + " 件を「言えた」に足しました。" };
+}
+$("syncMake").addEventListener("click", function(){
+  var code = makeCode();
+  var n = (code.length - 4) / 5;
+  var out = $("syncOut"), msg = $("syncOutMsg");
+  out.value = code;
+  out.focus(); out.select();
+  var done = false;
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(code); done = true; }
+  }catch(e){ done = false; }
+  if(!done){ try{ done = document.execCommand("copy"); }catch(e2){ done = false; } }
+  msg.textContent = (done ? "コピーしました。" : "上の欄を選んだので、長押しなどでコピーしてください。") + "（" + n + " 件ぶん）";
+  msg.className = "syncmsg " + (done ? "ok" : "ng");
+});
+$("syncApply").addEventListener("click", function(){
+  var res = applyCode($("syncIn").value);
+  var msg = $("syncInMsg");
+  msg.textContent = res.msg;
+  msg.className = "syncmsg " + (res.ok ? "ok" : "ng");
+  if(res.ok){ $("syncIn").value = ""; renderChips(); build(false); }
 });
 
 /* ---------- 起動 ---------- */
